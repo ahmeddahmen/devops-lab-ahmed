@@ -7,6 +7,10 @@ app = FastAPI(title="Order Service")
 
 PRODUCT_SERVICE_URL = os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8001")
 
+class OrderCreate(BaseModel):
+    product_id: int
+    quantity: int
+
 class Order(BaseModel):
     order_id: int
     product_id: int
@@ -26,8 +30,10 @@ def get_orders():
     return orders_db
 
 @app.post("/orders")
-async def create_order(product_id: int, quantity: int):
+async def create_order(payload: OrderCreate):
     global order_counter
+    product_id = payload.product_id
+    quantity = payload.quantity
 
     # Call Product Service to get product details
     try:
@@ -36,6 +42,10 @@ async def create_order(product_id: int, quantity: int):
             if response.status_code != 200:
                 raise HTTPException(status_code=404, detail="Product not found")
             product = response.json()
+            if "price" not in product or "name" not in product:
+                raise HTTPException(status_code=404, detail="Product not found")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Failed to connect to product service: {str(e)}")
 
