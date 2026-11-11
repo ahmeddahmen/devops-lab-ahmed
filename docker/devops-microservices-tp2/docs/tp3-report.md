@@ -34,9 +34,9 @@ docker network create tp3-net
 docker network inspect tp3-net
 ```
 
-**Findings:**
-- Default `bridge` network: containers communicate by IP only. No automatic DNS name resolution between containers.
-- User-defined bridge (`tp3-net`): automatic DNS name resolution by container name. This is why `order-service` can reach `product-service` by name.
+**Findings (observed):**
+- Default `bridge`: driver `bridge`, subnet `172.17.0.0/16`, gateway `172.17.0.1`. Containers on this network communicate by IP only. No automatic DNS name resolution between containers.
+- User-defined bridge `tp3-net`: driver `bridge`, subnet `172.19.0.0/16`, gateway `172.19.0.1`. Automatic DNS name resolution by container name. This is why `order-service` can reach `product-service` by name.
 
 ### 1.2 DNS Test on Custom Bridge
 
@@ -46,7 +46,7 @@ docker run --rm --network tp3-net busybox:1.36 nslookup tp3-web
 docker network inspect tp3-net
 ```
 
-**Result:** `nslookup tp3-web` resolved to the container's IP within `tp3-net`. This confirms Docker DNS works on user-defined networks.
+**Result:** `nslookup tp3-web` answered from `127.0.0.11` and resolved `tp3-web` to `172.19.0.2` inside `tp3-net`. This confirms Docker DNS works on user-defined networks. `tp3-web` and `tp3-net` were removed afterward.
 
 **Why name > IP:** Container IPs are dynamically assigned and can change on restart. Names are stable as long as the container name stays the same.
 
@@ -148,7 +148,13 @@ Invoke-RestMethod -Uri "http://localhost:8002/orders" -Method Post -ContentType 
 }
 ```
 
-Order Service called Product Service internally via `http://product-service:8001/products/1` over `app-net`.
+Observed response for product 1 (Laptop at 999.99, quantity 2):
+
+```json
+{"order_id":1,"product_id":1,"quantity":2,"product_name":"Laptop","total":1999.98}
+```
+
+Order Service called Product Service internally via `http://product-service:8001/products/1` over `app-net`. The endpoint reads `product_id` and `quantity` from the JSON body, which is what the lab `POST` sends.
 
 ### 3.4 DNS Inspection
 
@@ -158,7 +164,7 @@ docker compose logs order-service
 docker compose exec order-service python -c "import socket; print(socket.gethostbyname('product-service'))"
 ```
 
-The DNS lookup resolves `product-service` to its container IP within `app-net` — not a fixed address but assigned by Docker's embedded DNS.
+The DNS lookup resolved `product-service` to `172.18.0.2` inside `devops-microservices-tp2_app-net`. That address is assigned by Docker's embedded DNS and is not a fixed IP.
 
 ---
 
@@ -181,8 +187,7 @@ try {
 } catch { $_.Exception.Message }
 ```
 
-**Result:** HTTP 503 — Order Service returned `{"detail":"Failed to connect to product service: ..."}`.  
-Order Service remained **running** but could not complete the request because it depends on Product Service to retrieve product details.
+**Result:** HTTP 503. Order Service remained **running** (`docker compose ps` still listed it as Up) but could not complete the request because it depends on Product Service to retrieve product details.
 
 ```bash
 docker compose logs --tail=30 order-service
@@ -195,7 +200,11 @@ docker compose start product-service
 Invoke-RestMethod -Uri "http://localhost:8002/orders" -Method Post -ContentType "application/json" -Body $body
 ```
 
-**Result:** Order creation succeeded again after Product Service was back up.
+**Result:** Order creation succeeded again after Product Service was back up:
+
+```json
+{"order_id":2,"product_id":2,"quantity":1,"product_name":"Mouse","total":29.99}
+```
 
 **Why does `depends_on` not guarantee readiness?**  
 `depends_on` only controls **startup order** — it starts Product Service before Order Service. It does **not** wait for the application inside the container to be ready to accept HTTP requests. The process may still be initializing when Order Service tries to connect.
@@ -247,6 +256,6 @@ docker network inspect devops-microservices-tp2_app-net
 
 ```bash
 docker compose down
-docker compose ps    # should be empty
-docker network ls    # app-net should be gone
+docker compose ps    # empty: no project containers
+docker network ls    # only bridge, host, and none remained
 ```
